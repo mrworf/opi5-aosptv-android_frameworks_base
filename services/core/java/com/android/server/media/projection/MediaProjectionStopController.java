@@ -222,6 +222,10 @@ public class MediaProjectionStopController {
 
     @VisibleForTesting
     void callStateChanged() {
+        if (mTelecomManager == null) {
+            Slog.w(TAG, "TelecomManager unavailable; phone-call stop tracking disabled");
+            return;
+        }
         boolean isInCall = mTelecomManager.isInCall();
         if (isInCall) {
             mLastCallStartTimeMillis = SystemClock.uptimeMillis();

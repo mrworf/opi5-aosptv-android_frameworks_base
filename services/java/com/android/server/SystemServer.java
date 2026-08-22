@@ -1846,19 +1846,20 @@ public final class SystemServer implements Dumpable {
                 t.traceEnd();
             }
 
-            if (AppFunctionManagerConfiguration.isSupported(context)) {
+            // The TV product omits the optional manager wrappers these services depend on.
+            if (!isTv && AppFunctionManagerConfiguration.isSupported(context)) {
                 t.traceBegin("StartAppFunctionManager");
                 mSystemServiceManager.startService(AppFunctionManagerService.class);
                 t.traceEnd();
             }
 
-            if (enablePccFrameworkSupport()) {
+            if (!isTv && enablePccFrameworkSupport()) {
                 t.traceBegin("StartPccSandboxManagerService");
                 mSystemServiceManager.startService(PccSandboxManagerService.class);
                 t.traceEnd();
             }
 
-            if (enableLskfResetManager()) {
+            if (!isTv && enableLskfResetManager()) {
                 t.traceBegin("StartLskfResetManager");
                 mSystemServiceManager.startService(LskfResetManagerService.class);
                 t.traceEnd();

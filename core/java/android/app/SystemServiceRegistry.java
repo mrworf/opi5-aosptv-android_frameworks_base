@@ -379,11 +379,27 @@ public final class SystemServiceRegistry {
 
     private static volatile boolean sInitializing;
 
+    // This product currently cannot resolve the jarjar-relocated aconfig implementation
+    // classes from the boot class loader. Keep essential service registration running and
+    // conservatively leave the affected optional services disabled.
+    // This must remain a compile-time constant.  A runtime/volatile false still leaves
+    // references to optional manager classes in the zygote boot bytecode, and Android TV
+    // does not include all of those classes on its boot class path.
+    private static final boolean sRelocatedOptionalFlagsAvailable = false;
+
     // Not instantiable.
     private SystemServiceRegistry() { }
 
     static {
-        registerServices();
+        try {
+            registerServices();
+        } catch (NoClassDefFoundError e) {
+            // Keep this diagnostic image alive long enough to expose ADB and
+            // report which optional framework dependency is absent. Services
+            // registered before the failure remain available.
+            Slog.e(TAG, "Continuing after service-registry linkage failure; message="
+                    + e.getMessage() + ", cause=" + e.getCause(), e);
+        }
     }
 
     @RavenwoodRedirect
@@ -457,7 +473,8 @@ public final class SystemServiceRegistry {
                 return new AudioDeviceVolumeManager(ctx);
             }});
 
-        if (android.app.contentsafety.flags.Flags.enableContentsafety()) {
+        if (sRelocatedOptionalFlagsAvailable
+                && android.app.contentsafety.flags.Flags.enableContentsafety()) {
             registerService(Context.CONTENT_SAFETY_SERVICE, ContentSafetyManager.class,
                     new CachedServiceFetcher<ContentSafetyManager>() {
                         @Override
@@ -726,7 +743,8 @@ public final class SystemServiceRegistry {
                 );
             }});
 
-        if (android.service.notification.Flags.enableDndSync()) {
+        if (sRelocatedOptionalFlagsAvailable
+                && android.service.notification.Flags.enableDndSync()) {
             registerService(Context.CONTEXTUAL_MODE_SERVICE, ContextualModeManager.class,
                     new CachedServiceFetcher<ContextualModeManager>() {
                 @Override
@@ -824,7 +842,8 @@ public final class SystemServiceRegistry {
                 return new StorageManager(ctx, ctx.mMainThread.getHandler().getLooper());
             }});
 
-        if (android.app.privatecompute.flags.Flags.enablePccFrameworkSupport()) {
+        if (sRelocatedOptionalFlagsAvailable
+                && android.app.privatecompute.flags.Flags.enablePccFrameworkSupport()) {
             registerService(Context.FILE_SERVICE, FileManager.class,
                     new CachedServiceFetcher<FileManager>() {
                 @Override
@@ -910,7 +929,7 @@ public final class SystemServiceRegistry {
                         return new AdbManager(ctx, IAdbManager.Stub.asInterface(b));
                     }});
 
-        if (enableWiredSerialApi()) {
+        if (sRelocatedOptionalFlagsAvailable && enableWiredSerialApi()) {
             registerService(Context.SERIAL_SERVICE, android.hardware.serial.SerialManager.class,
                     new CachedServiceFetcher<android.hardware.serial.SerialManager>() {
                         @Override
@@ -945,7 +964,8 @@ public final class SystemServiceRegistry {
                         return new SystemVibratorManager(ctx);
                     }});
 
-        if (android.os.multisensory.Flags.enableMultisensoryFeedback()) {
+        if (sRelocatedOptionalFlagsAvailable
+                && android.os.multisensory.Flags.enableMultisensoryFeedback()) {
             registerService(
                     Context.MULTISENSORY_MANAGER_SERVICE,
                     MultisensoryManager.class,
@@ -964,6 +984,9 @@ public final class SystemServiceRegistry {
                 return new SystemVibrator(ctx);
             }});
 
+        // VoiceInteractionManager is present in this product even though some other
+        // relocated optional framework APIs are not.  Do not hide its registration
+        // behind the broad optional-API compatibility guard.
         if (assistSettingsPrivacyImprovementsEnabled()) {
             registerService(Context.VOICE_INTERACTION_MANAGER_SERVICE,
                     VoiceInteractionManager.class,
@@ -1101,7 +1124,7 @@ public final class SystemServiceRegistry {
                 return new CompanionDeviceManager(service, ctx.getOuterContext());
             }});
 
-        if (enableAppFunctionManager()) {
+        if (sRelocatedOptionalFlagsAvailable && enableAppFunctionManager()) {
             registerService(Context.APP_FUNCTION_SERVICE, AppFunctionManager.class,
                     new CachedServiceFetcher<>() {
                         @Override
@@ -1118,7 +1141,7 @@ public final class SystemServiceRegistry {
                     });
         }
 
-      if (enableLskfResetManager()) {
+      if (sRelocatedOptionalFlagsAvailable && enableLskfResetManager()) {
             registerService(Context.LSKF_RESET_SERVICE, LskfResetManager.class,
                     new CachedServiceFetcher<>() {
                         @Override
@@ -1602,7 +1625,7 @@ public final class SystemServiceRegistry {
             }
         });
 
-        if (android.companion.Flags.taskContinuity()) {
+        if (sRelocatedOptionalFlagsAvailable && android.companion.Flags.taskContinuity()) {
             registerService(Context.TASK_CONTINUITY_SERVICE, TaskContinuityManager.class,
                     new CachedServiceFetcher<TaskContinuityManager>() {
                         @Override
@@ -1804,7 +1827,7 @@ public final class SystemServiceRegistry {
                         return b == null ? null : new AppHibernationManager(ctx);
                     }});
 
-        if (enablePccFrameworkSupport()) {
+        if (sRelocatedOptionalFlagsAvailable && enablePccFrameworkSupport()) {
             registerService(Context.PCC_SANDBOX_SERVICE, PccSandboxManager.class,
                     new CachedServiceFetcher<PccSandboxManager>() {
                         @Override
@@ -1826,7 +1849,8 @@ public final class SystemServiceRegistry {
                         return new DreamManager(ctx);
                     }});
 
-        if (android.service.personalcontext.Flags.enablePersonalContextService()) {
+        if (sRelocatedOptionalFlagsAvailable
+                && android.service.personalcontext.Flags.enablePersonalContextService()) {
             registerService(Context.PERSONAL_CONTEXT_SERVICE, PersonalContextManager.class,
                     new CachedServiceFetcher<>() {
                         @Override
@@ -2029,7 +2053,7 @@ public final class SystemServiceRegistry {
         // DO NOT do a flag check like this unless the flag is read-only.
         // (because this code is executed during preload in zygote.)
         // If the flag is mutable, the check should be inside CachedServiceFetcher.
-        if (Flags.bicClient()) {
+        if (sRelocatedOptionalFlagsAvailable && Flags.bicClient()) {
             registerService(Context.BACKGROUND_INSTALL_CONTROL_SERVICE,
                     BackgroundInstallControlManager.class,
                     new CachedServiceFetcher<BackgroundInstallControlManager>() {
@@ -2087,7 +2111,7 @@ public final class SystemServiceRegistry {
                     }
                 });
 
-        if (interactiveChooser()) {
+        if (sRelocatedOptionalFlagsAvailable && interactiveChooser()) {
             registerService(
                     Context.CHOOSER_SERVICE,
                     ChooserManager.class,
@@ -2104,7 +2128,7 @@ public final class SystemServiceRegistry {
                     });
         }
 
-        if (aisealHostApis()) {
+        if (sRelocatedOptionalFlagsAvailable && aisealHostApis()) {
             registerService(
                     Context.AISEAL_HOST_SERVICE,
                     AiSealManager.class,
@@ -2120,7 +2144,7 @@ public final class SystemServiceRegistry {
                     });
         }
 
-        if (enableAppFunctionPermissionV2()) {
+        if (sRelocatedOptionalFlagsAvailable && enableAppFunctionPermissionV2()) {
             registerService(
                     Context.ALLOWLIST_SERVICE,
                     AllowlistManager.class,
@@ -2149,7 +2173,8 @@ public final class SystemServiceRegistry {
                     }
                 });
 
-        if (com.android.input.flags.Flags.enableAttentionServiceApis()) {
+        if (sRelocatedOptionalFlagsAvailable
+                && com.android.input.flags.Flags.enableAttentionServiceApis()) {
             registerService(Context.ATTENTION_SERVICE, AttentionManager.class,
                     new CachedServiceFetcher<>() {
                         @Override
@@ -2200,26 +2225,34 @@ public final class SystemServiceRegistry {
                 TelecomDependencies.registerServiceWrapper();
             }
 
-            if (com.android.webapp.flags.Flags.enableWebAppServiceV2()) {
+            if (sRelocatedOptionalFlagsAvailable
+                    && com.android.webapp.flags.Flags.enableWebAppServiceV2()) {
                 WebAppFrameworkInitializer.registerServiceWrappers();
             }
 
-            if (newStoragePublicApi()) {
+            if (sRelocatedOptionalFlagsAvailable && newStoragePublicApi()) {
                 ConfigInfrastructureFrameworkInitializer.registerServiceWrappers();
             }
 
-            if (com.android.server.telecom.flags.Flags.telecomMainlineBlockedNumbersManager()) {
+            if (sRelocatedOptionalFlagsAvailable
+                    && com.android.server.telecom.flags.Flags
+                            .telecomMainlineBlockedNumbersManager()) {
                 ProviderFrameworkInitializer.registerServiceWrappers();
             }
             // This code is executed on zygote during preload, where only read-only
             // flags can be used. Do not use mutable flags.
-            if (android.permission.flags.Flags.enhancedConfirmationModeApisEnabled()) {
+            if (sRelocatedOptionalFlagsAvailable
+                    && android.permission.flags.Flags.enhancedConfirmationModeApisEnabled()) {
                 EnhancedConfirmationFrameworkInitializer.registerServiceWrappers();
             }
             ProfilingFrameworkInitializer.registerServiceWrappers();
-            if (android.os.profiling.anomaly.flags.Flags.anomalyDetectorCoreC()) {
+            if (sRelocatedOptionalFlagsAvailable
+                    && android.os.profiling.anomaly.flags.Flags.anomalyDetectorCoreC()) {
                 AnomalyDetectorFrameworkInitializer.registerServiceWrappers();
             }
+            // WebView is part of this product and its update-service wrapper is required by
+            // both the relro loader and Google setup.  Unlike the optional relocated APIs
+            // guarded above, android.webkit.Flags is present on this boot class path.
             if (android.webkit.Flags.updateServiceIpcWrapper()) {
                 WebViewBootstrapFrameworkInitializer.registerServiceWrappers();
             }
@@ -2232,7 +2265,8 @@ public final class SystemServiceRegistry {
 
             // When RELEASE_ANOMALY_DETECTOR is "false", this call is a no-op.
             AnomalyDetectorFrameworkInitializer.registerServiceWrappers();
-            if (android.security.Flags.uprobestatsBridgeService()) {
+            if (sRelocatedOptionalFlagsAvailable
+                    && android.security.Flags.uprobestatsBridgeService()) {
                 UprobestatsFrameworkInitializer.registerServiceWrappers();
             }
         } finally {
@@ -2340,7 +2374,7 @@ public final class SystemServiceRegistry {
             }
             // TODO (b/404593897): make it a case of the switch statement above when the flag is
             //  removed.
-            if (interactiveChooser()) {
+            if (sRelocatedOptionalFlagsAvailable && interactiveChooser()) {
                 if (Context.CHOOSER_SERVICE.equals(name) && !isChooserManagerSupported(ctx)) {
                     return null;
                 }
