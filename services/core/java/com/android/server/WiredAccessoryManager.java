@@ -92,6 +92,7 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
     private final InputManagerService mInputManager;
 
     private final boolean mUseDevInputEventForAudioJack;
+    private final boolean mAssumeHdmiAudioConnected;
 
     public WiredAccessoryManager(Context context, InputManagerService inputManager) {
         PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
@@ -102,6 +103,8 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
 
         mUseDevInputEventForAudioJack =
                 context.getResources().getBoolean(R.bool.config_useDevInputEventForAudioJack);
+        mAssumeHdmiAudioConnected =
+                context.getResources().getBoolean(R.bool.config_assumeHdmiAudioConnected);
 
         mExtconObserver = new WiredAccessoryExtconObserver();
         mObserver = new WiredAccessoryObserver();
@@ -151,6 +154,13 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
             mExtconObserver.init();
         } else {
             mObserver.init();
+        }
+
+        if (mAssumeHdmiAudioConnected) {
+            synchronized (mLock) {
+                updateLocked(NAME_HDMI_AUDIO, mHeadsetState | BIT_HDMI_AUDIO,
+                        true /* isSynchronous */);
+            }
         }
     }
 

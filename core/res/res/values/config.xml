@@ -3579,6 +3579,10 @@
          on the headphone/microphone jack. When false use the older uevent framework. -->
     <bool name="config_useDevInputEventForAudioJack">false</bool>
 
+    <!-- Assume that the fixed display connection also provides HDMI audio when
+         the kernel does not expose a legacy HDMI audio switch. -->
+    <bool name="config_assumeHdmiAudioConnected">false</bool>
+
     <!-- Whether safe headphone hearing is enforced by any regulation (e.g.
          EN50332-3, EN50332-2) or not (country specific). -->
     <bool name="config_safe_media_volume_enabled">true</bool>
