@@ -2241,10 +2241,11 @@ public final class SystemServiceRegistry {
             }
             // This code is executed on zygote during preload, where only read-only
             // flags can be used. Do not use mutable flags.
-            if (sRelocatedOptionalFlagsAvailable
-                    && android.permission.flags.Flags.enhancedConfirmationModeApisEnabled()) {
-                EnhancedConfirmationFrameworkInitializer.registerServiceWrappers();
-            }
+            // PermissionController uses this manager whenever the matching ECM
+            // server is enabled.  The permission module is on this product's
+            // boot class path, so register its wrapper independently from the
+            // unavailable relocated optional flags used by unrelated services.
+            EnhancedConfirmationFrameworkInitializer.registerServiceWrappers();
             ProfilingFrameworkInitializer.registerServiceWrappers();
             if (sRelocatedOptionalFlagsAvailable
                     && android.os.profiling.anomaly.flags.Flags.anomalyDetectorCoreC()) {
