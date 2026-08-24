@@ -1124,7 +1124,7 @@ public final class SystemServiceRegistry {
                 return new CompanionDeviceManager(service, ctx.getOuterContext());
             }});
 
-        if (sRelocatedOptionalFlagsAvailable && enableAppFunctionManager()) {
+        if (enableAppFunctionManager()) {
             registerService(Context.APP_FUNCTION_SERVICE, AppFunctionManager.class,
                     new CachedServiceFetcher<>() {
                         @Override
