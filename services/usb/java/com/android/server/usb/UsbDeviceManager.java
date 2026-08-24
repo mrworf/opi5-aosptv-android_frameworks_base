@@ -1926,18 +1926,17 @@ public class UsbDeviceManager implements ActivityTaskManagerInternal.ScreenObser
             }
         }
 
-        private boolean isTv() {
+        protected boolean isTv() {
             return mContext.getPackageManager().hasSystemFeature(PackageManager.FEATURE_LEANBACK);
         }
 
         protected long getChargingFunctions() {
-            // if ADB is enabled, reset functions to ADB
-            // else enable MTP as usual.
+            // If ADB is enabled, reset functions to ADB. TVs are commonly fixed host devices and
+            // should not expose MTP merely because no explicit gadget function was requested.
             if (isAdbEnabled()) {
                 return UsbManager.FUNCTION_ADB;
-            } else {
-                return UsbManager.FUNCTION_MTP;
             }
+            return isTv() ? UsbManager.FUNCTION_NONE : UsbManager.FUNCTION_MTP;
         }
 
         protected void setSystemProperty(String prop, String val) {

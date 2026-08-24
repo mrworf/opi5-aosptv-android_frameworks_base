@@ -96,6 +96,7 @@ public class UsbHandlerTest {
 
     private class MockUsbHandler extends UsbDeviceManager.UsbHandler {
         boolean mIsUsbTransferAllowed;
+        boolean mIsTv;
         Intent mBroadcastedIntent;
 
         MockUsbHandler(Looper looper, Context context, UsbDeviceManager deviceManager,
@@ -133,6 +134,11 @@ public class UsbHandlerTest {
         @Override
         protected boolean isUsbTransferAllowed() {
             return mIsUsbTransferAllowed;
+        }
+
+        @Override
+        protected boolean isTv() {
+            return mIsTv;
         }
 
         @Override
@@ -291,6 +297,27 @@ public class UsbHandlerTest {
     public void bootCompletedCharging() {
         sendBootCompleteMessages(mUsbHandler);
         assertEquals(mUsbHandler.getEnabledFunctions(), UsbManager.FUNCTION_NONE);
+    }
+
+    @SmallTest
+    @Test
+    public void chargingFunctionsOnTvAreNone() {
+        mUsbHandler.mIsTv = true;
+        assertEquals(UsbManager.FUNCTION_NONE, mUsbHandler.getChargingFunctions());
+    }
+
+    @SmallTest
+    @Test
+    public void chargingFunctionsOnNonTvAreMtp() {
+        assertEquals(UsbManager.FUNCTION_MTP, mUsbHandler.getChargingFunctions());
+    }
+
+    @SmallTest
+    @Test
+    public void chargingFunctionsWithAdbAreAdb() {
+        mUsbHandler.mIsTv = true;
+        when(mAdbManagerInternal.isAdbEnabled(eq(AdbTransportType.USB))).thenReturn(true);
+        assertEquals(UsbManager.FUNCTION_ADB, mUsbHandler.getChargingFunctions());
     }
 
     @SmallTest
