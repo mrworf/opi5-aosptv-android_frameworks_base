@@ -2144,7 +2144,11 @@ public final class SystemServiceRegistry {
                     });
         }
 
-        if (sRelocatedOptionalFlagsAvailable && enableAppFunctionPermissionV2()) {
+        // SystemServer starts AllowlistService whenever permission-v2 is enabled, and
+        // AppFunctionManagerService requires this manager in its constructor. Keep the
+        // client registration aligned on products (including TV) that do not expose the
+        // relocated optional flag APIs.
+        if (enableAppFunctionPermissionV2()) {
             registerService(
                     Context.ALLOWLIST_SERVICE,
                     AllowlistManager.class,
