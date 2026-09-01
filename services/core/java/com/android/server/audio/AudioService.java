@@ -580,6 +580,10 @@ public class AudioService extends IAudioService.Stub
     // Increased delay to not interefere with low core app launch latency
     private static final int SCHEDULED_PERMISSION_UPDATE_LONG_DELAY_MS = 500;
 
+    /** One media volume shared by all supported Bluetooth media output types. */
+    static final String SHARED_BLUETOOTH_MEDIA_VOLUME = "volume_music_bluetooth_shared";
+    private static final int SHARED_BLUETOOTH_VOLUME_UNSET = -1;
+
     /** @see AudioSystemThread */
     private AudioSystemThread mAudioSystemThread;
     /** @see AudioHandler */
@@ -698,6 +702,9 @@ public class AudioService extends IAudioService.Stub
 
     // protects VolumeStreamState / VolumeGroupState operations
     private final Object mVolumeStateLock = new Object();
+
+    @GuardedBy("mVolumeStateLock")
+    private int mSharedBluetoothMediaVolumeIndex = SHARED_BLUETOOTH_VOLUME_UNSET;
 
    /** Maximum volume index values for audio streams */
     protected static int[] MAX_STREAM_VOLUME = new int[] {
@@ -2157,6 +2164,88 @@ public class AudioService extends IAudioService.Stub
             Log.d(TAG, "Clear volume cache after routing update");
         }
         AudioManager.clearVolumeCache(AudioManager.VOLUME_CACHING_API);
+        restoreSharedBluetoothMediaVolumeIfActive("routing updated");
+    }
+
+    private static boolean isSharedBluetoothMediaDevice(int device) {
+        return AudioSystem.DEVICE_OUT_ALL_A2DP_SET.contains(device)
+                || device == AudioSystem.DEVICE_OUT_BLE_HEADSET
+                || device == AudioSystem.DEVICE_OUT_BLE_SPEAKER
+                || device == AudioSystem.DEVICE_OUT_BLE_BROADCAST;
+    }
+
+    private void readSharedBluetoothMediaVolume() {
+        final VolumeStreamState music = getVssForStream(AudioSystem.STREAM_MUSIC);
+        if (music == null) {
+            return;
+        }
+        int index = mSettings.getSystemIntForUser(mContentResolver,
+                SHARED_BLUETOOTH_MEDIA_VOLUME, SHARED_BLUETOOTH_VOLUME_UNSET,
+                UserHandle.USER_SYSTEM);
+        if (index < 0) {
+            final String legacyName = System.VOLUME_SETTINGS_INT[AudioSystem.STREAM_MUSIC]
+                    + "_" + AudioSystem.getOutputDeviceName(
+                            AudioSystem.DEVICE_OUT_BLUETOOTH_A2DP);
+            index = mSettings.getSystemIntForUser(mContentResolver, legacyName,
+                    SHARED_BLUETOOTH_VOLUME_UNSET, UserHandle.USER_SYSTEM);
+            if (index >= 0) {
+                mSettings.putSystemIntForUser(mContentResolver,
+                        SHARED_BLUETOOTH_MEDIA_VOLUME, index, UserHandle.USER_SYSTEM);
+            }
+        }
+        synchronized (mVolumeStateLock) {
+            mSharedBluetoothMediaVolumeIndex = index < 0
+                    ? SHARED_BLUETOOTH_VOLUME_UNSET
+                    : Math.max(music.getMinIndex(), Math.min(music.getMaxIndex(), index * 10));
+        }
+    }
+
+    private void restoreSharedBluetoothMediaVolumeIfActive(@NonNull String caller) {
+        final int device = getDeviceForStream(AudioSystem.STREAM_MUSIC,
+                /*selectAbsoluteDevices=*/true);
+        if (isSharedBluetoothMediaDevice(device)) {
+            restoreSharedBluetoothMediaVolume(device, caller);
+        }
+    }
+
+    private void restoreSharedBluetoothMediaVolume(int device, @NonNull String caller) {
+        if (!isSharedBluetoothMediaDevice(device)) {
+            return;
+        }
+        final VolumeStreamState music = getVssForStream(AudioSystem.STREAM_MUSIC);
+        if (music == null) {
+            return;
+        }
+        final int index;
+        synchronized (mVolumeStateLock) {
+            if (mSharedBluetoothMediaVolumeIndex == SHARED_BLUETOOTH_VOLUME_UNSET) {
+                mSharedBluetoothMediaVolumeIndex = music.getIndex(device);
+            }
+            index = mSharedBluetoothMediaVolumeIndex;
+            music.setIndex(index, device, "shared Bluetooth volume: " + caller,
+                    /*hasModifyAudioSettings=*/true);
+        }
+        setDeviceVolume(music, device);
+        if (AudioSystem.DEVICE_OUT_ALL_A2DP_SET.contains(device) && mAvrcpAbsVolSupported) {
+            mDeviceBroker.postSetAvrcpAbsoluteVolumeIndex((index + 5) / 10);
+        } else if (device == AudioSystem.DEVICE_OUT_BLE_HEADSET
+                || device == AudioSystem.DEVICE_OUT_BLE_SPEAKER
+                || device == AudioSystem.DEVICE_OUT_BLE_BROADCAST) {
+            mDeviceBroker.postSetLeAudioVolumeIndex(index, music.getMaxIndex(),
+                    AudioSystem.STREAM_MUSIC);
+        }
+    }
+
+    @VisibleForTesting
+    void restoreSharedBluetoothMediaVolumeForTest(int device) {
+        restoreSharedBluetoothMediaVolume(device, "test");
+    }
+
+    @VisibleForTesting
+    int getSharedBluetoothMediaVolumeIndexForTest() {
+        synchronized (mVolumeStateLock) {
+            return mSharedBluetoothMediaVolumeIndex;
+        }
     }
 
     //-----------------------------------------------------------------
@@ -8012,6 +8101,8 @@ public class AudioService extends IAudioService.Stub
             AudioManager.clearVolumeCache(AudioManager.VOLUME_CACHING_API);
         }
 
+        readSharedBluetoothMediaVolume();
+
         readVolumeGroupsSettings(userSwitch);
 
         // apply new ringer mode before checking volume for alias streams so that streams
@@ -11714,6 +11805,11 @@ public class AudioService extends IAudioService.Stub
 
     /*package*/ void setDeviceVolume(VolumeStreamState streamState, int device) {
         synchronized (mVolumeStateLock) {
+            if (isSharedBluetoothMediaDevice(device)
+                    && sStreamVolumeAlias.get(streamState.mStreamType,
+                            /*valueIfKeyNotFound=*/-1) == AudioSystem.STREAM_MUSIC) {
+                mSharedBluetoothMediaVolumeIndex = streamState.getIndex(device);
+            }
             sendMsg(mAudioHandler, SoundDoseHelper.MSG_CSD_UPDATE_ATTENUATION, SENDMSG_QUEUE,
                     device, (isAbsoluteVolumeDevice(device) ? 1 : 0),
                     streamState, /*delay=*/0);
@@ -11801,6 +11897,14 @@ public class AudioService extends IAudioService.Stub
                             streamState.getSettingNameForDevice(device),
                             (streamState.getIndex(device) + 5) / 10,
                             streamState.getVolumePersistenceUserId());
+                    if (isSharedBluetoothMediaDevice(device)
+                            && sStreamVolumeAlias.get(streamState.mStreamType,
+                                    /*valueIfKeyNotFound=*/-1) == AudioSystem.STREAM_MUSIC) {
+                        mSettings.putSystemIntForUser(mContentResolver,
+                                SHARED_BLUETOOTH_MEDIA_VOLUME,
+                                (streamState.getIndex(device) + 5) / 10,
+                                UserHandle.USER_SYSTEM);
+                    }
                 }
                 if (isPlatformPc()) {
                     // TODO(b/475861305): persist mute only for PC until bug is fixed
@@ -12269,6 +12373,9 @@ public class AudioService extends IAudioService.Stub
         if (updateDeviceVolume) {
             sendMsg(mAudioHandler, MSG_SET_DEVICE_VOLUME, SENDMSG_QUEUE,
                     AudioSystem.DEVICE_OUT_BLUETOOTH_A2DP, 0, vss, 0);
+        }
+        if (support) {
+            restoreSharedBluetoothMediaVolumeIfActive("AVRCP ready");
         }
     }
 

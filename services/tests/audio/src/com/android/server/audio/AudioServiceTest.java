@@ -69,6 +69,7 @@ public class AudioServiceTest {
 
     private static final int MAX_MESSAGE_HANDLING_DELAY_MS = 100;
     private static final int DEFAULT_INPUT_GAIN_INDEX = 50;
+    private static final int VOLUME_PERSIST_DELAY_MS = 500;
 
     @Rule
     public final MockitoRule mockito = MockitoJUnit.rule();
@@ -197,6 +198,92 @@ public class AudioServiceTest {
                     new IllegalStateException(), new IllegalStateException());
         Assert.assertEquals(false, mAudioService.isHotwordStreamSupported(false));
         Assert.assertEquals(false, mAudioService.isHotwordStreamSupported(true));
+    }
+
+    @Test
+    public void sharedBluetoothMediaVolume_persistsForA2dp() {
+        final int target = Math.min(4, mAudioService.getStreamMaxVolume(STREAM_MUSIC));
+
+        mAudioService.postSetVolumeIndexOnDevice(STREAM_MUSIC, target * 10,
+                AudioSystem.DEVICE_OUT_BLUETOOTH_A2DP, "test");
+        mTestLooper.dispatchAll();
+        mTestLooper.moveTimeForward(VOLUME_PERSIST_DELAY_MS);
+        mTestLooper.dispatchAll();
+
+        Assert.assertEquals(target, mSettingsAdapter.getSystemIntForUser(
+                mContext.getContentResolver(), AudioService.SHARED_BLUETOOTH_MEDIA_VOLUME,
+                -1, UserHandle.USER_SYSTEM));
+        Assert.assertEquals(target * 10,
+                mAudioService.getSharedBluetoothMediaVolumeIndexForTest());
+    }
+
+    @Test
+    public void sharedBluetoothMediaVolume_nonBluetoothDoesNotOverwrite() {
+        mSettingsAdapter.putSystemIntForUser(mContext.getContentResolver(),
+                AudioService.SHARED_BLUETOOTH_MEDIA_VOLUME, 3, UserHandle.USER_SYSTEM);
+        mAudioService.reloadAudioSettings();
+
+        mAudioService.postSetVolumeIndexOnDevice(STREAM_MUSIC, 5 * 10,
+                AudioSystem.DEVICE_OUT_SPEAKER, "test");
+        mTestLooper.dispatchAll();
+
+        Assert.assertEquals(3, mSettingsAdapter.getSystemIntForUser(
+                mContext.getContentResolver(), AudioService.SHARED_BLUETOOTH_MEDIA_VOLUME,
+                -1, UserHandle.USER_SYSTEM));
+        Assert.assertEquals(3 * 10,
+                mAudioService.getSharedBluetoothMediaVolumeIndexForTest());
+    }
+
+    @Test
+    public void sharedBluetoothMediaVolume_restoresForA2dpAndLeAudio() {
+        mSettingsAdapter.putSystemIntForUser(mContext.getContentResolver(),
+                AudioService.SHARED_BLUETOOTH_MEDIA_VOLUME, 2, UserHandle.USER_SYSTEM);
+        mAudioService.reloadAudioSettings();
+
+        mAudioService.restoreSharedBluetoothMediaVolumeForTest(
+                AudioSystem.DEVICE_OUT_BLUETOOTH_A2DP);
+        mAudioService.restoreSharedBluetoothMediaVolumeForTest(
+                AudioSystem.DEVICE_OUT_BLE_SPEAKER);
+        mTestLooper.dispatchAll();
+
+        Assert.assertEquals(Integer.valueOf(2 * 10), mAudioService.getVolumeForDevice(
+                STREAM_MUSIC, AudioSystem.DEVICE_OUT_BLUETOOTH_A2DP).first);
+        Assert.assertEquals(Integer.valueOf(2 * 10), mAudioService.getVolumeForDevice(
+                STREAM_MUSIC, AudioSystem.DEVICE_OUT_BLE_SPEAKER).first);
+    }
+
+    @Test
+    public void sharedBluetoothMediaVolume_excludesHearingAid() {
+        mSettingsAdapter.putSystemIntForUser(mContext.getContentResolver(),
+                AudioService.SHARED_BLUETOOTH_MEDIA_VOLUME, 2, UserHandle.USER_SYSTEM);
+        mAudioService.reloadAudioSettings();
+        final int previous = mAudioService.getVolumeForDevice(STREAM_MUSIC,
+                AudioSystem.DEVICE_OUT_BLE_HEARING_AID).first;
+
+        mAudioService.restoreSharedBluetoothMediaVolumeForTest(
+                AudioSystem.DEVICE_OUT_BLE_HEARING_AID);
+
+        Assert.assertEquals(previous, (int) mAudioService.getVolumeForDevice(STREAM_MUSIC,
+                AudioSystem.DEVICE_OUT_BLE_HEARING_AID).first);
+        Assert.assertEquals(2 * 10,
+                mAudioService.getSharedBluetoothMediaVolumeIndexForTest());
+    }
+
+    @Test
+    public void sharedBluetoothMediaVolume_migratesLegacyA2dpSetting() {
+        final String legacyName = android.provider.Settings.System.VOLUME_SETTINGS_INT[STREAM_MUSIC]
+                + "_" + AudioSystem.getOutputDeviceName(
+                        AudioSystem.DEVICE_OUT_BLUETOOTH_A2DP);
+        mSettingsAdapter.putSystemIntForUser(mContext.getContentResolver(), legacyName, 4,
+                UserHandle.USER_SYSTEM);
+
+        mAudioService.reloadAudioSettings();
+
+        Assert.assertEquals(4, mSettingsAdapter.getSystemIntForUser(
+                mContext.getContentResolver(), AudioService.SHARED_BLUETOOTH_MEDIA_VOLUME,
+                -1, UserHandle.USER_SYSTEM));
+        Assert.assertEquals(4 * 10,
+                mAudioService.getSharedBluetoothMediaVolumeIndexForTest());
     }
 
     /**
