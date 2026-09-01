@@ -574,6 +574,19 @@ public class AudioDeviceInventory {
         }
     }
 
+    /*package*/ @NonNull List<AudioDeviceAttributes> getConnectedOutputDeviceAttributes() {
+        synchronized (mDevicesLock) {
+            final ArrayList<AudioDeviceAttributes> devices = new ArrayList<>();
+            for (DeviceInfo device : mConnectedDevices.values()) {
+                if (!AudioSystem.isInputDevice(device.mDeviceType)) {
+                    devices.add(new AudioDeviceAttributes(device.mDeviceType,
+                            device.mDeviceAddress, device.mDeviceName));
+                }
+            }
+            return devices;
+        }
+    }
+
     /**
      * Whether there's a connected device that should always ring (outside of silent mode)
      * Writes are protected by mDevicesLock, reads are atomic in {@link #hasAlwaysRingDevice()}

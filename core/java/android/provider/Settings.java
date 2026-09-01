@@ -18343,6 +18343,14 @@ public final class Settings {
         public static final String DOCK_AUDIO_MEDIA_ENABLED = "dock_audio_media_enabled";
 
         /**
+         * User-selected TV audio output. The value is either {@code automatic} or a versioned
+         * device identity written by the system Settings application.
+         * @hide
+         */
+        @Readable
+        public static final String TV_AUDIO_OUTPUT_PREFERENCE = "tv_audio_output_preference";
+
+        /**
          * The surround sound formats AC3, DTS or IEC61937 are
          * available for use if they are detected.
          * This is the default mode.

@@ -36,6 +36,7 @@ import static org.mockito.Mockito.when;
 import android.app.AppOpsManager;
 import android.content.Context;
 import android.media.AudioDeviceAttributes;
+import android.media.AudioDeviceInfo;
 import android.media.AudioSystem;
 import android.os.IpcDataCache;
 import android.os.PermissionEnforcer;
@@ -61,6 +62,8 @@ import org.mockito.Mock;
 import org.mockito.Spy;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
+
+import java.util.List;
 
 @MediumTest
 @RunWith(AndroidJUnit4.class)
@@ -284,6 +287,53 @@ public class AudioServiceTest {
                 -1, UserHandle.USER_SYSTEM));
         Assert.assertEquals(4 * 10,
                 mAudioService.getSharedBluetoothMediaVolumeIndexForTest());
+    }
+
+    @Test
+    public void tvAudioOutputPreference_rejectsMalformedAndUnsupportedValues() {
+        Assert.assertFalse(AudioService.isValidTvAudioOutputPreferenceForTest("v2:8::device"));
+        Assert.assertFalse(AudioService.isValidTvAudioOutputPreferenceForTest(
+                "v1:not-a-number::device"));
+        Assert.assertFalse(AudioService.isValidTvAudioOutputPreferenceForTest(
+                "v1:" + AudioDeviceInfo.TYPE_REMOTE_SUBMIX + "::virtual"));
+        Assert.assertTrue(AudioService.isValidTvAudioOutputPreferenceForTest("automatic"));
+    }
+
+    @Test
+    public void tvAudioOutputPreference_resolvesExactAddressBeforeName() {
+        final AudioDeviceAttributes sameName = outputDevice(
+                AudioDeviceInfo.TYPE_USB_HEADSET, "other", "Same DAC");
+        final AudioDeviceAttributes exact = outputDevice(
+                AudioDeviceInfo.TYPE_USB_HEADSET, "saved", "Renamed DAC");
+
+        final AudioDeviceAttributes resolved =
+                AudioService.resolveTvAudioOutputPreferenceForTest(
+                        "v1:" + AudioDeviceInfo.TYPE_USB_HEADSET + ":saved:Same%20DAC",
+                        List.of(sameName, exact));
+
+        Assert.assertSame(exact, resolved);
+    }
+
+    @Test
+    public void tvAudioOutputPreference_rebindsOnlyUniqueProductName() {
+        final AudioDeviceAttributes first = outputDevice(
+                AudioDeviceInfo.TYPE_USB_HEADSET, "first", "same dac");
+        final AudioDeviceAttributes second = outputDevice(
+                AudioDeviceInfo.TYPE_USB_HEADSET, "second", "Same DAC");
+        final String stored = "v1:" + AudioDeviceInfo.TYPE_USB_HEADSET + ":saved:Same%20DAC";
+
+        Assert.assertSame(first, AudioService.resolveTvAudioOutputPreferenceForTest(
+                stored, List.of(first)));
+        final AudioDeviceAttributes ambiguous =
+                AudioService.resolveTvAudioOutputPreferenceForTest(
+                        stored, List.of(first, second));
+        Assert.assertEquals("saved", ambiguous.getAddress());
+        Assert.assertEquals(AudioDeviceInfo.TYPE_USB_HEADSET, ambiguous.getType());
+    }
+
+    private static AudioDeviceAttributes outputDevice(int type, String address, String name) {
+        return new AudioDeviceAttributes(AudioDeviceAttributes.ROLE_OUTPUT, type, address, name,
+                List.of(), List.of());
     }
 
     /**

@@ -584,6 +584,20 @@ public class AudioService extends IAudioService.Stub
     static final String SHARED_BLUETOOTH_MEDIA_VOLUME = "volume_music_bluetooth_shared";
     private static final int SHARED_BLUETOOTH_VOLUME_UNSET = -1;
 
+    private static final String TV_AUDIO_OUTPUT_AUTOMATIC = "automatic";
+    private static final String TV_AUDIO_OUTPUT_VERSION = "v1";
+    private static final AudioAttributes[] TV_AUDIO_OUTPUT_ATTRIBUTES = {
+            new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).build(),
+            new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_GAME).build(),
+            new AudioAttributes.Builder().setUsage(
+                    AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE).build(),
+            new AudioAttributes.Builder().setUsage(
+                    AudioAttributes.USAGE_ASSISTANCE_SONIFICATION).build(),
+            new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANT).build(),
+            new AudioAttributes.Builder().setUsage(
+                    AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY).build(),
+    };
+
     /** @see AudioSystemThread */
     private AudioSystemThread mAudioSystemThread;
     /** @see AudioHandler */
@@ -705,6 +719,10 @@ public class AudioService extends IAudioService.Stub
 
     @GuardedBy("mVolumeStateLock")
     private int mSharedBluetoothMediaVolumeIndex = SHARED_BLUETOOTH_VOLUME_UNSET;
+
+    private final Object mTvAudioOutputLock = new Object();
+    @GuardedBy("mTvAudioOutputLock")
+    private String mAppliedTvAudioOutputDeviceKey;
 
    /** Maximum volume index values for audio streams */
     protected static int[] MAX_STREAM_VOLUME = new int[] {
@@ -2165,6 +2183,162 @@ public class AudioService extends IAudioService.Stub
         }
         AudioManager.clearVolumeCache(AudioManager.VOLUME_CACHING_API);
         restoreSharedBluetoothMediaVolumeIfActive("routing updated");
+        applyTvAudioOutputPreference("routing updated");
+    }
+
+    private static boolean isSupportedTvAudioOutputType(int type) {
+        return type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+                || type == AudioDeviceInfo.TYPE_HDMI
+                || type == AudioDeviceInfo.TYPE_HDMI_ARC
+                || type == AudioDeviceInfo.TYPE_HDMI_EARC
+                || type == AudioDeviceInfo.TYPE_USB_DEVICE
+                || type == AudioDeviceInfo.TYPE_USB_ACCESSORY
+                || type == AudioDeviceInfo.TYPE_USB_HEADSET
+                || type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP
+                || type == AudioDeviceInfo.TYPE_BLE_HEADSET
+                || type == AudioDeviceInfo.TYPE_BLE_SPEAKER
+                || type == AudioDeviceInfo.TYPE_BLE_BROADCAST;
+    }
+
+    @Nullable
+    private static TvAudioOutputPreference parseTvAudioOutputPreference(@Nullable String value) {
+        if (TextUtils.isEmpty(value) || TV_AUDIO_OUTPUT_AUTOMATIC.equals(value)) {
+            return TvAudioOutputPreference.AUTOMATIC;
+        }
+        final String[] fields = value.split(":", 4);
+        if (fields.length != 4 || !TV_AUDIO_OUTPUT_VERSION.equals(fields[0])) {
+            return null;
+        }
+        try {
+            final int type = Integer.parseInt(fields[1]);
+            if (!isSupportedTvAudioOutputType(type)) {
+                return null;
+            }
+            return new TvAudioOutputPreference(type, Uri.decode(fields[2]),
+                    Uri.decode(fields[3]));
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    @VisibleForTesting
+    static boolean isValidTvAudioOutputPreferenceForTest(@Nullable String value) {
+        return parseTvAudioOutputPreference(value) != null;
+    }
+
+    @VisibleForTesting
+    @Nullable
+    static AudioDeviceAttributes resolveTvAudioOutputPreferenceForTest(@Nullable String value,
+            @NonNull List<AudioDeviceAttributes> connected) {
+        final TvAudioOutputPreference preference = parseTvAudioOutputPreference(value);
+        return preference == null ? null : preference.resolve(connected);
+    }
+
+    private void applyTvAudioOutputPreference(@NonNull String caller) {
+        final String stored = mSettings.getGlobalString(mContentResolver,
+                Settings.Global.TV_AUDIO_OUTPUT_PREFERENCE);
+        final TvAudioOutputPreference preference = parseTvAudioOutputPreference(stored);
+        if (preference == null) {
+            applyTvAudioOutputDevice(null, "invalid setting: " + caller);
+            return;
+        }
+        applyTvAudioOutputDevice(preference.resolve(mDeviceBroker), caller);
+    }
+
+    private void applyTvAudioOutputDevice(@Nullable AudioDeviceAttributes device,
+            @NonNull String caller) {
+        final String deviceKey = device == null ? TV_AUDIO_OUTPUT_AUTOMATIC
+                : device.getType() + ":" + device.getAddress();
+        synchronized (mTvAudioOutputLock) {
+            if (deviceKey.equals(mAppliedTvAudioOutputDeviceKey)) {
+                return;
+            }
+            boolean applied = true;
+            for (AudioProductStrategy strategy : mAudioSystem.getAudioProductStrategies(
+                    /*filterInternal=*/true)) {
+                if (!isTvAudioOutputStrategy(strategy)) {
+                    continue;
+                }
+                final int status = device == null
+                        ? mDeviceBroker.removePreferredDevicesForStrategySync(strategy.getId())
+                        : mDeviceBroker.setPreferredDevicesForStrategySync(strategy.getId(),
+                                List.of(device));
+                if (device != null && status != AudioSystem.SUCCESS) {
+                    // Keep retrying on future route changes. In particular, an unavailable saved
+                    // device can be rejected now and become valid after it reconnects.
+                    applied = false;
+                }
+                if (status != AudioSystem.SUCCESS && status != AudioSystem.BAD_VALUE) {
+                    Log.w(TAG, "Could not apply TV audio output to strategy " + strategy.getId()
+                            + " status=" + status + " caller=" + caller);
+                }
+            }
+            mAppliedTvAudioOutputDeviceKey = applied ? deviceKey : null;
+            Log.i(TAG, "TV audio output " + deviceKey + (applied ? " applied" : " pending")
+                    + " by " + caller);
+        }
+    }
+
+    private static boolean isTvAudioOutputStrategy(@NonNull AudioProductStrategy strategy) {
+        for (AudioAttributes attributes : TV_AUDIO_OUTPUT_ATTRIBUTES) {
+            if (strategy.supportsAudioAttributes(attributes)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static final class TvAudioOutputPreference {
+        static final TvAudioOutputPreference AUTOMATIC = new TvAudioOutputPreference();
+
+        private final int mType;
+        private final String mAddress;
+        private final String mName;
+        private final boolean mAutomatic;
+
+        private TvAudioOutputPreference() {
+            mType = AudioDeviceInfo.TYPE_UNKNOWN;
+            mAddress = "";
+            mName = "";
+            mAutomatic = true;
+        }
+
+        TvAudioOutputPreference(int type, @NonNull String address, @NonNull String name) {
+            mType = type;
+            mAddress = address;
+            mName = name;
+            mAutomatic = false;
+        }
+
+        @Nullable AudioDeviceAttributes resolve(@NonNull AudioDeviceBroker broker) {
+            return resolve(broker.getConnectedOutputDeviceAttributes());
+        }
+
+        @Nullable AudioDeviceAttributes resolve(
+                @NonNull List<AudioDeviceAttributes> connectedDevices) {
+            if (mAutomatic) {
+                return null;
+            }
+            AudioDeviceAttributes identityMatch = null;
+            for (AudioDeviceAttributes connected : connectedDevices) {
+                if (connected.getType() != mType) {
+                    continue;
+                }
+                if (mAddress.equals(connected.getAddress())) {
+                    return connected;
+                }
+                if (!mName.isEmpty() && mName.equalsIgnoreCase(connected.getName())) {
+                    if (identityMatch != null) {
+                        identityMatch = null;
+                        break;
+                    }
+                    identityMatch = connected;
+                }
+            }
+            return identityMatch != null ? identityMatch
+                    : new AudioDeviceAttributes(AudioDeviceAttributes.ROLE_OUTPUT,
+                            mType, mAddress);
+        }
     }
 
     private static boolean isSharedBluetoothMediaDevice(int device) {
@@ -12254,6 +12428,8 @@ public class AudioService extends IAudioService.Stub
                 Settings.System.MODE_RINGER_STREAMS_AFFECTED), false, this);
             mContentResolver.registerContentObserver(Settings.Global.getUriFor(
                 Settings.Global.DOCK_AUDIO_MEDIA_ENABLED), false, this);
+            mContentResolver.registerContentObserver(Settings.Global.getUriFor(
+                    Settings.Global.TV_AUDIO_OUTPUT_PREFERENCE), false, this);
             mContentResolver.registerContentObserver(Settings.System.getUriFor(
                     Settings.System.MASTER_MONO), false, this, UserHandle.USER_ALL);
             mContentResolver.registerContentObserver(Settings.System.getUriFor(
@@ -12271,6 +12447,7 @@ public class AudioService extends IAudioService.Stub
 
             mContentResolver.registerContentObserver(Settings.Secure.getUriFor(
                     Settings.Secure.VOICE_INTERACTION_SERVICE), false, this);
+            applyTvAudioOutputPreference("settings initialized");
         }
 
         @Override
@@ -12301,6 +12478,7 @@ public class AudioService extends IAudioService.Stub
             synchronized (mAssistantUidLock) {
                 updateAssistantUIdLocked(/* forceUpdate= */ false);
             }
+            applyTvAudioOutputPreference("setting changed");
         }
 
         @GuardedBy("mSurroundLock")

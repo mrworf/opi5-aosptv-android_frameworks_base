@@ -2846,6 +2846,10 @@ public class AudioDeviceBroker {
         return mDeviceInventory.getImmutableDeviceInventory();
     }
 
+    @NonNull List<AudioDeviceAttributes> getConnectedOutputDeviceAttributes() {
+        return mDeviceInventory.getConnectedOutputDeviceAttributes();
+    }
+
     void addOrUpdateDeviceSAStateInInventory(AdiDeviceState deviceState, boolean syncInventory) {
         mDeviceInventory.addOrUpdateDeviceSAStateInInventory(deviceState, syncInventory);
     }
