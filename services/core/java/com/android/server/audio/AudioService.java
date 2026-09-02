@@ -723,6 +723,7 @@ public class AudioService extends IAudioService.Stub
     private final Object mTvAudioOutputLock = new Object();
     @GuardedBy("mTvAudioOutputLock")
     private String mAppliedTvAudioOutputDeviceKey;
+    private final GlobalEqualizerController mGlobalEqualizerController;
 
    /** Maximum volume index values for audio streams */
     protected static int[] MAX_STREAM_VOLUME = new int[] {
@@ -1553,6 +1554,20 @@ public class AudioService extends IAudioService.Stub
         mSystemServer = systemServer;
         mAudioVolumeGroupHelper = audioVolumeGroupHelper;
         mSettings = settings;
+        mGlobalEqualizerController = new GlobalEqualizerController(
+                new GlobalEqualizerController.SettingsSource() {
+                    @Override
+                    public boolean isEnabled() {
+                        return mSettings.getGlobalInt(mContentResolver,
+                                Settings.Global.TV_EQUALIZER_ENABLED, 0) != 0;
+                    }
+
+                    @Override
+                    public String getBandLevels() {
+                        return mSettings.getGlobalString(mContentResolver,
+                                Settings.Global.TV_EQUALIZER_BAND_LEVELS);
+                    }
+                });
 
         mAudioPolicy = audioPolicy;
         mAudioPolicy.registerOnStartTask(() -> {
@@ -2158,6 +2173,7 @@ public class AudioService extends IAudioService.Stub
         synchronized (mSupportedSystemUsagesLock) {
             AudioSystem.setSupportedSystemUsages(mSupportedSystemUsages);
         }
+        mGlobalEqualizerController.apply();
     }
 
     //-----------------------------------------------------------------
@@ -2690,6 +2706,7 @@ public class AudioService extends IAudioService.Stub
 
         // Restore vibrator info
         updateVibratorInfos();
+        mGlobalEqualizerController.onAudioServerRestarted();
     }
 
     private void onRemoveAssistantServiceUids(int[] uids) {
@@ -12430,6 +12447,10 @@ public class AudioService extends IAudioService.Stub
                 Settings.Global.DOCK_AUDIO_MEDIA_ENABLED), false, this);
             mContentResolver.registerContentObserver(Settings.Global.getUriFor(
                     Settings.Global.TV_AUDIO_OUTPUT_PREFERENCE), false, this);
+            mContentResolver.registerContentObserver(Settings.Global.getUriFor(
+                    Settings.Global.TV_EQUALIZER_ENABLED), false, this);
+            mContentResolver.registerContentObserver(Settings.Global.getUriFor(
+                    Settings.Global.TV_EQUALIZER_BAND_LEVELS), false, this);
             mContentResolver.registerContentObserver(Settings.System.getUriFor(
                     Settings.System.MASTER_MONO), false, this, UserHandle.USER_ALL);
             mContentResolver.registerContentObserver(Settings.System.getUriFor(
@@ -12479,6 +12500,9 @@ public class AudioService extends IAudioService.Stub
                 updateAssistantUIdLocked(/* forceUpdate= */ false);
             }
             applyTvAudioOutputPreference("setting changed");
+            if (mSystemReady) {
+                mGlobalEqualizerController.apply();
+            }
         }
 
         @GuardedBy("mSurroundLock")

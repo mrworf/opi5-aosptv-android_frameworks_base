@@ -18351,6 +18351,22 @@ public final class Settings {
         public static final String TV_AUDIO_OUTPUT_PREFERENCE = "tv_audio_output_preference";
 
         /**
+         * Whether the system-owned equalizer on the TV output mix is enabled.
+         * @hide
+         */
+        @SuppressLint({"NoSettingsProvider", "UnflaggedApi"})
+        @Readable
+        public static final String TV_EQUALIZER_ENABLED = "tv_equalizer_enabled";
+
+        /**
+         * Five comma-separated equalizer band levels in millibels.
+         * @hide
+         */
+        @SuppressLint({"NoSettingsProvider", "UnflaggedApi"})
+        @Readable
+        public static final String TV_EQUALIZER_BAND_LEVELS = "tv_equalizer_band_levels";
+
+        /**
          * The surround sound formats AC3, DTS or IEC61937 are
          * available for use if they are detected.
          * This is the default mode.
