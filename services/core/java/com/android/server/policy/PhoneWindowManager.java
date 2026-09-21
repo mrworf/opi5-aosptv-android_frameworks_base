@@ -681,6 +681,10 @@ public class PhoneWindowManager implements WindowManagerPolicy {
     ModifierShortcutManager mModifierShortcutManager;
     /** Currently fully consumed key codes per device */
     private final SparseArray<Set<Integer>> mConsumedKeysForDevice = new SparseArray<>();
+    // A Bluetooth remote can wake the SoC for any HID report. Only HOME and POWER should
+    // turn the TV on; remember rejected downs so their ups cannot leak after another wake.
+    private final SparseArray<Set<Integer>> mSuppressedBluetoothRemoteKeys = new SparseArray<>();
+    private static final int INPUT_BUS_BLUETOOTH = 0x05;
     PowerManager.WakeLock mBroadcastWakeLock;
     PowerManager.WakeLock mPowerKeyWakeLock;
     boolean mHavePendingMediaKeyRepeatWithWakeLock;
@@ -4428,6 +4432,14 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         final int displayId = event.getDisplayId();
         final boolean isInjected = (policyFlags & WindowManagerPolicy.FLAG_INJECTED) != 0;
 
+        if (!isInjected && shouldSuppressBluetoothRemoteKey(event, interactive)) {
+            return 0;
+        }
+        if (!interactive && !isInjected && keyCode == KeyEvent.KEYCODE_HOME
+                && mHasFeatureLeanback && isBluetoothRemote(event.getDevice())) {
+            isWakeKey = true;
+        }
+
         if (DEBUG_INPUT) {
             // If screen is off then we treat the case where the keyguard is open but hidden
             // the same as if it were open and in front.
@@ -5008,6 +5020,49 @@ public class PhoneWindowManager implements WindowManagerPolicy {
             default:
                 return true;
         }
+    }
+
+    static boolean isBluetoothRemote(InputDevice device) {
+        return device != null && device.getDeviceBus() == INPUT_BUS_BLUETOOTH
+                && device.getKeyboardType() == InputDevice.KEYBOARD_TYPE_NON_ALPHABETIC
+                && device.supportsSource(InputDevice.SOURCE_DPAD)
+                && !device.supportsSource(InputDevice.SOURCE_GAMEPAD)
+                && !device.supportsSource(InputDevice.SOURCE_JOYSTICK);
+    }
+
+    private boolean shouldSuppressBluetoothRemoteKey(KeyEvent event, boolean interactive) {
+        final int deviceId = event.getDeviceId();
+        final int keyCode = event.getKeyCode();
+        final boolean down = event.getAction() == KeyEvent.ACTION_DOWN;
+        final Set<Integer> suppressed = mSuppressedBluetoothRemoteKeys.get(deviceId);
+
+        // An UP may arrive after POWER or another source has made the TV interactive.
+        if (!down && suppressed != null && suppressed.remove(keyCode)) {
+            if (suppressed.isEmpty()) {
+                mSuppressedBluetoothRemoteKeys.remove(deviceId);
+            }
+            return true;
+        }
+        if (down && interactive && suppressed != null) {
+            // A missed UP must not poison a later, awake press of the same key.
+            suppressed.remove(keyCode);
+            if (suppressed.isEmpty()) {
+                mSuppressedBluetoothRemoteKeys.remove(deviceId);
+            }
+        }
+        if (interactive || !mHasFeatureLeanback || !isBluetoothRemote(event.getDevice())
+                || keyCode == KeyEvent.KEYCODE_HOME || keyCode == KeyEvent.KEYCODE_POWER) {
+            return false;
+        }
+        if (down) {
+            Set<Integer> keys = mSuppressedBluetoothRemoteKeys.get(deviceId);
+            if (keys == null) {
+                keys = new HashSet<>();
+                mSuppressedBluetoothRemoteKeys.put(deviceId, keys);
+            }
+            keys.add(keyCode);
+        }
+        return true;
     }
 
     /**

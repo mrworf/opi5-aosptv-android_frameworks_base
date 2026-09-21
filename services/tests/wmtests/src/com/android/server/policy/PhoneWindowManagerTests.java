@@ -55,6 +55,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
@@ -94,6 +95,7 @@ import android.service.dreams.DreamManagerInternal;
 import android.testing.TestableContext;
 import android.view.Display;
 import android.view.DisplayInfo;
+import android.view.InputDevice;
 import android.view.KeyEvent;
 
 import androidx.test.filters.SmallTest;
@@ -647,6 +649,65 @@ public class PhoneWindowManagerTests {
                         keyCode,
                         /* isDown= */ true,
                         /* keyEventFlags= */ 0);
+    }
+
+    @Test
+    public void testBluetoothRemoteOnlyHomeAndPowerWakeTv() {
+        doReturn(mPackageManager).when(mContext).getPackageManager();
+        when(mPackageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)).thenReturn(true);
+        initPhoneWindowManager();
+        mPhoneWindowManager.mSystemBooted = true;
+
+        final InputDevice remote = mock(InputDevice.class);
+        when(remote.getDeviceBus()).thenReturn(0x05);
+        when(remote.getKeyboardType()).thenReturn(InputDevice.KEYBOARD_TYPE_NON_ALPHABETIC);
+        when(remote.supportsSource(InputDevice.SOURCE_DPAD)).thenReturn(true);
+        assertThat(PhoneWindowManager.isBluetoothRemote(remote)).isTrue();
+
+        for (int keyCode : new int[] { KeyEvent.KEYCODE_DPAD_CENTER,
+                KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.KEYCODE_WAKEUP,
+                KeyEvent.KEYCODE_TV_POWER }) {
+            final KeyEvent down = remoteKeyEvent(remote, keyCode, KeyEvent.ACTION_DOWN);
+            final KeyEvent up = remoteKeyEvent(remote, keyCode, KeyEvent.ACTION_UP);
+            assertThat(mPhoneWindowManager.interceptKeyBeforeQueueing(
+                    down, WindowManagerPolicy.FLAG_WAKE)).isEqualTo(0);
+            assertThat(mPhoneWindowManager.interceptKeyBeforeQueueing(
+                    up, WindowManagerPolicy.FLAG_INTERACTIVE)).isEqualTo(0);
+        }
+        verify(mWindowWakeUpPolicy, never()).wakeUpFromKey(
+                anyInt(), anyLong(), anyInt(), anyBoolean(), anyInt());
+
+        final KeyEvent home = remoteKeyEvent(remote, KeyEvent.KEYCODE_HOME, KeyEvent.ACTION_DOWN);
+        mPhoneWindowManager.interceptKeyBeforeQueueing(home, 0);
+        verify(mWindowWakeUpPolicy).wakeUpFromKey(
+                eq(DEFAULT_DISPLAY), eq(100L), eq(KeyEvent.KEYCODE_HOME), eq(true), eq(0));
+    }
+
+    @Test
+    public void testBluetoothKeyboardAndGamepadAreNotClassifiedAsRemotes() {
+        final InputDevice device = mock(InputDevice.class);
+        when(device.getDeviceBus()).thenReturn(0x05);
+        when(device.getKeyboardType()).thenReturn(InputDevice.KEYBOARD_TYPE_ALPHABETIC);
+        when(device.supportsSource(InputDevice.SOURCE_DPAD)).thenReturn(true);
+        assertThat(PhoneWindowManager.isBluetoothRemote(device)).isFalse();
+
+        when(device.getKeyboardType()).thenReturn(InputDevice.KEYBOARD_TYPE_NON_ALPHABETIC);
+        when(device.supportsSource(InputDevice.SOURCE_GAMEPAD)).thenReturn(true);
+        assertThat(PhoneWindowManager.isBluetoothRemote(device)).isFalse();
+
+        when(device.getDeviceBus()).thenReturn(0x03); // USB
+        when(device.supportsSource(InputDevice.SOURCE_GAMEPAD)).thenReturn(false);
+        assertThat(PhoneWindowManager.isBluetoothRemote(device)).isFalse();
+    }
+
+    private static KeyEvent remoteKeyEvent(InputDevice device, int keyCode, int action) {
+        final KeyEvent event = mock(KeyEvent.class);
+        when(event.getDevice()).thenReturn(device);
+        when(event.getDeviceId()).thenReturn(42);
+        when(event.getKeyCode()).thenReturn(keyCode);
+        when(event.getAction()).thenReturn(action);
+        when(event.getEventTime()).thenReturn(100L);
+        return event;
     }
 
     @Test
