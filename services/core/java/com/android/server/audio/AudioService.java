@@ -711,7 +711,8 @@ public class AudioService extends IAudioService.Stub
 
     private AtomicInteger mMode = new AtomicInteger(AudioSystem.MODE_NORMAL);
 
-    // protects mRingerMode
+    // protects mRingerMode. If both locks are required, acquire mSettingsLock before
+    // mVolumeStateLock; VolumeStreamState.setIndex() relies on this ordering.
     private final Object mSettingsLock = new Object();
 
     // protects VolumeStreamState / VolumeGroupState operations
@@ -2412,9 +2413,11 @@ public class AudioService extends IAudioService.Stub
                 mSharedBluetoothMediaVolumeIndex = music.getIndex(device);
             }
             index = mSharedBluetoothMediaVolumeIndex;
-            music.setIndex(index, device, "shared Bluetooth volume: " + caller,
-                    /*hasModifyAudioSettings=*/true);
         }
+        // setIndex() acquires mSettingsLock before mVolumeStateLock. Do not call it while
+        // holding mVolumeStateLock or Bluetooth route changes can deadlock system_server.
+        music.setIndex(index, device, "shared Bluetooth volume: " + caller,
+                /*hasModifyAudioSettings=*/true);
         setDeviceVolume(music, device);
         if (AudioSystem.DEVICE_OUT_ALL_A2DP_SET.contains(device) && mAvrcpAbsVolSupported) {
             mDeviceBroker.postSetAvrcpAbsoluteVolumeIndex((index + 5) / 10);
