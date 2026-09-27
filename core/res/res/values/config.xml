@@ -5608,6 +5608,13 @@
          classes are instantiated in the order of the array. -->
     <string-array translatable="false" name="config_deviceSpecificSystemServices"></string-array>
 
+    <!-- Packages preinstalled by the system that should initially be trusted to open the
+         package installer. The permission policy applies this only once per package and user,
+         so a later user decision to revoke the special access remains authoritative. Packages
+         must be system apps and declare REQUEST_INSTALL_PACKAGES. -->
+    <string-array translatable="false"
+        name="config_defaultRequestInstallPackagesAppOpPackages"></string-array>
+
     <!-- Class name of the device specific implementation to replace the DevicePolicyManagerService
          or empty if the default should be used. -->
     <string translatable="false" name="config_deviceSpecificDevicePolicyManagerService"></string>

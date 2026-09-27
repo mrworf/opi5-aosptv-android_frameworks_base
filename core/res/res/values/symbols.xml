@@ -550,6 +550,7 @@
   <java-symbol type="bool" name="config_hasPermanentDpad" />
   <java-symbol type="bool" name="config_useDefaultFocusHighlight" />
   <java-symbol type="array" name="config_deviceSpecificSystemServices" />
+  <java-symbol type="array" name="config_defaultRequestInstallPackagesAppOpPackages" />
   <java-symbol type="string" name="config_deviceSpecificDevicePolicyManagerService" />
   <java-symbol type="string" name="config_deviceSpecificAudioService" />
   <java-symbol type="string" name="config_deviceSpecificInputMethodManagerService" />

@@ -119,6 +119,8 @@ import java.util.Set;
 public final class PermissionPolicyService extends SystemService {
     private static final String LOG_TAG = PermissionPolicyService.class.getSimpleName();
     private static final String SYSTEM_PKG = "android";
+    private static final String DEFAULT_REQUEST_INSTALL_PACKAGES_APP_OP_INITIALIZED_PREFIX =
+            "default_request_install_packages_app_op_initialized:";
     private static final boolean DEBUG = false;
     private static final long USER_SENSITIVE_UPDATE_DELAY_MS = 60000;
 
@@ -575,6 +577,7 @@ public final class PermissionPolicyService extends SystemService {
         // Force synchronization as permissions might have changed
         t.traceBegin("Permission_synchronize_permissions-" + userId);
         synchronizePermissionsAndAppOpsForUser(userId);
+        grantDefaultRequestInstallPackagesAppOps(userId);
         t.traceEnd();
 
         // Tell observers we are initialized for this user.
@@ -659,6 +662,63 @@ public final class PermissionPolicyService extends SystemService {
         t.traceBegin("Permission_syncPackages-" + userId);
         synchronizer.syncPackages();
         t.traceEnd();
+    }
+
+    /**
+     * Grants the user-controlled package-installer app-op to configured preinstalled stores.
+     *
+     * <p>This is deliberately not a grant of {@link Manifest.permission#INSTALL_PACKAGES}; the
+     * configured app can only launch the platform package installer, which continues to show its
+     * normal install confirmation. A secure-setting marker makes this a one-time default for each
+     * package and user, preserving any later choice made in the special-access settings UI.</p>
+     */
+    private void grantDefaultRequestInstallPackagesAppOps(@UserIdInt int userId) {
+        final String[] packageNames = getContext().getResources().getStringArray(
+                com.android.internal.R.array.config_defaultRequestInstallPackagesAppOpPackages);
+        if (packageNames.length == 0) {
+            return;
+        }
+
+        final Context userContext = getUserContext(getContext(), UserHandle.of(userId));
+        if (userContext == null) {
+            return;
+        }
+        final PackageManager userPackageManager = userContext.getPackageManager();
+        final AppOpsManager appOpsManager = userContext.getSystemService(AppOpsManager.class);
+        for (String packageName : packageNames) {
+            final String initializedSetting =
+                    DEFAULT_REQUEST_INSTALL_PACKAGES_APP_OP_INITIALIZED_PREFIX + packageName;
+            if (Settings.Secure.getIntForUser(userContext.getContentResolver(), initializedSetting,
+                    0, userId) != 0) {
+                continue;
+            }
+
+            final PackageInfo packageInfo;
+            try {
+                packageInfo = userPackageManager.getPackageInfo(packageName, GET_PERMISSIONS);
+            } catch (NameNotFoundException e) {
+                Slog.w(LOG_TAG, "Configured package installer source is not installed: "
+                        + packageName);
+                continue;
+            }
+            if (packageInfo.applicationInfo == null || !packageInfo.applicationInfo.isSystemApp()) {
+                Slog.w(LOG_TAG, "Refusing default package-installer access for non-system app: "
+                        + packageName);
+                continue;
+            }
+            if (packageInfo.requestedPermissions == null
+                    || !List.of(packageInfo.requestedPermissions).contains(
+                            Manifest.permission.REQUEST_INSTALL_PACKAGES)) {
+                Slog.w(LOG_TAG, "Configured package does not request REQUEST_INSTALL_PACKAGES: "
+                        + packageName);
+                continue;
+            }
+
+            appOpsManager.setMode(AppOpsManager.OP_REQUEST_INSTALL_PACKAGES,
+                    packageInfo.applicationInfo.uid, packageName, MODE_ALLOWED);
+            Settings.Secure.putIntForUser(userContext.getContentResolver(), initializedSetting,
+                    1, userId);
+        }
     }
 
     private void resetAppOpPermissionsIfNotRequestedForUidAsync(int uid) {
